@@ -7,14 +7,14 @@ from langchain_core.messages import AIMessage, AIMessageChunk
 from loguru import logger
 
 from langflow.graph.schema import CHAT_COMPONENTS, RECORDS_COMPONENTS, InterfaceComponentTypes, ResultData
-from langflow.graph.utils import UnbuiltObject, serialize_field, log_transaction
+from langflow.graph.utils import UnbuiltObject, log_transaction, log_vertex_build, serialize_field
 from langflow.graph.vertex.base import Vertex
+from langflow.inputs.inputs import InputTypes
 from langflow.schema import Data
 from langflow.schema.artifact import ArtifactType
 from langflow.schema.message import Message
 from langflow.schema.schema import INPUT_FIELD_NAME
-from langflow.services.monitor.utils import log_vertex_build
-from langflow.template.field.base import UNDEFINED
+from langflow.template.field.base import UNDEFINED, Output
 from langflow.utils.schemas import ChatOutputResponse, DataOutputResponse
 from langflow.utils.util import unescape_string
 
@@ -57,6 +57,16 @@ class ComponentVertex(Vertex):
 
         for key, value in self._built_object.items():
             self.add_result(key, value)
+
+    def get_input(self, name: str) -> InputTypes:
+        if self._custom_component is None:
+            raise ValueError(f"Vertex {self.id} does not have a component instance.")
+        return self._custom_component.get_input(name)
+
+    def get_output(self, name: str) -> Output:
+        if self._custom_component is None:
+            raise ValueError(f"Vertex {self.id} does not have a component instance.")
+        return self._custom_component.get_output(name)
 
     def get_edge_with_target(self, target_id: str) -> Generator["ContractEdge", None, None]:
         """
@@ -388,8 +398,12 @@ class InterfaceVertex(ComponentVertex):
             for key, value in origin_vertex.results.items():
                 if isinstance(value, (AsyncIterator, Iterator)):
                     origin_vertex.results[key] = complete_message
-
-        await log_vertex_build(
+        if self._custom_component:
+            if hasattr(self._custom_component, "should_store_message") and hasattr(
+                self._custom_component, "store_message"
+            ):
+                self._custom_component.store_message(message)
+        log_vertex_build(
             flow_id=self.graph.flow_id,
             vertex_id=self.id,
             valid=True,
